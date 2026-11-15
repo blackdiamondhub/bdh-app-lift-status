@@ -831,3 +831,13 @@ class ProvidesTests(TestCase):
         from lift_status.plugin import STAT_KEYS, spec
         self.assertEqual(set(spec.provides), {"stats", "season"})
         self.assertEqual({k for k, _ in STAT_KEYS}, {"runs_open", "lifts_open", "groomed"})
+
+
+class ManifestTests(TestCase):
+    def test_hub_api_2_manifest(self):
+        from lift_status.plugin import spec
+        m = spec.manifest()
+        self.assertEqual(m["api_version"], 2)
+        self.assertEqual(m["permissions"], [])
+        self.assertEqual((m["network"], m["lifecycle"], m["memory_mb"]), ("outbound", "on_demand", 96))
+        self.assertEqual(m["provides"], ["season", "stats"])

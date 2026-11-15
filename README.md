@@ -9,6 +9,16 @@ Page: `/lift_status/`. Shows the trail map, open/groomed summary rings,
 Sun Peaks' daily operations update, lift hours, and trails per zone
 (West Bowl is a section of Tod Mountain; scrolling to it switches the map).
 
+## Container (hub API 2)
+
+Since 2.0.0 the app runs in its own container: no broker permissions (it
+uses no hub data), `network: outbound` (sunpeaksresort.com),
+`lifecycle: on_demand`, `memory_mb: 96`. The hub pulls the status tile and
+the `stats` and `season` providers from the container, waking it if it's
+stopped. CI's `image` job (from bdh-sdk's `app-ci.yml`) locks the
+dependencies against the hub's app runtime, builds the app's image and
+smoke-tests it the way the supervisor runs it.
+
 ## Development
 
 CI (`.github/workflows/ci.yml`) uses the reusable `app-ci.yml` from

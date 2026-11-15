@@ -1,4 +1,5 @@
 from bdh_sdk import PluginSpec, Tile
+from bdh_sdk.plugins import LIFECYCLE_ON_DEMAND, NETWORK_OUTBOUND
 from bdh_sdk.provides import SEASON, STATS
 
 STAT_KEYS = (
@@ -24,4 +25,13 @@ spec = PluginSpec(
             order=20,
         ),
     ),
+    api_version=2,
+    # No hub data: the lifts and trails are Sun Peaks'.
+    permissions=(),
+    # Scrapes sunpeaksresort.com.
+    network=NETWORK_OUTBOUND,
+    # Status is scraped on request and cached; the hub's status/stats/season
+    # hooks wake the app when it's stopped.
+    lifecycle=LIFECYCLE_ON_DEMAND,
+    memory_mb=96,
 )
