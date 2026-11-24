@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.urls]
-Source = "https://github.com/blackdiamondlodge/bdh-app-lift-status"
+Source = "https://github.com/blackdiamondhub/bdh-app-lift-status"
 
 [project.entry-points."blackdiamondhub.plugins"]
 lift_status = "lift_status.plugin:spec"
