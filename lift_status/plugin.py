@@ -15,6 +15,9 @@ spec = PluginSpec(
     status="lift_status.homepage.status",
     provides={STATS: "lift_status.provides.stats", SEASON: "lift_status.provides.season"},
     stat_keys=STAT_KEYS,
+    # Read-only lift and run lookups for the hub's assistant, in every mode.
+    tools="lift_status.assistant.tools",
+    run_tool="lift_status.assistant.run_tool",
     tiles=(
         Tile(
             title="Lift Status",
