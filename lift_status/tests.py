@@ -875,3 +875,133 @@ class HubFrameLayoutTests(TestCase):
                 if pattern.search(line):
                     hits.append(f"{path.relative_to(root)}:{n}: {line.strip()}")
         self.assertEqual(hits, [])
+
+
+class AssistantToolTests(TestCase):
+    """The assistant's lift and run lookups, run the way the hub runs them (FakeBroker sessions)."""
+
+    def setUp(self):
+        import datetime
+        from bdh_sdk import Stay, settings
+        from bdh_sdk.testing import FakeBroker
+
+        saved = settings._store
+        self.broker = FakeBroker(grants=("tools.*",), install=True, app_id="lift_status")
+        self.broker.start()
+        self.addCleanup(settings.set_store, saved)
+        self.addCleanup(self.broker.stop)
+        self.broker.stay = Stay(guest="Smith")  # a voice session during a stay is in guest mode
+        self.data = parse_lift_status(SAMPLE_HTML + WEST_BOWL_HTML)
+        self.error = None
+        self.now = datetime.datetime(2026, 12, 13, 18, 0, tzinfo=datetime.timezone.utc)  # 11 am at the lodge
+
+        def scrape():
+            if self.error:
+                raise self.error
+            return self.data
+        for target, kwargs in (("lift_status.assistant.get_lift_status", {"side_effect": scrape}),
+                               ("lift_status.assistant.utc_now", {"side_effect": lambda: self.now})):
+            patcher = patch(target, **kwargs)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def at(self, month, day, hour):
+        import datetime
+        self.now = (datetime.datetime(2026 if month > 6 else 2027, month, day, hour, tzinfo=datetime.timezone.utc)
+                    + datetime.timedelta(hours=7))
+
+    def call(self, name, args=None):
+        from bdh_sdk import tools as sdk_tools
+        from lift_status import assistant
+
+        self.broker.assistant_tools.clear()
+        for tool in assistant.tools(mode="guest"):
+            self.broker.add_tool(tool, lambda a, t=tool.id: assistant.run_tool(t, a, mode="guest"))
+        return sdk_tools.call_tool(sdk_tools.open_session(), name, args)
+
+    def lift(self, text):
+        result = self.call("lift_status", {"lift": text})
+        self.assertTrue(result["ok"], result)
+        return result["result"]
+
+    def test_every_mode_gets_two_readonly_lookups(self):
+        from bdh_sdk import ALL_MODES, hooks
+        from lift_status import assistant
+        from lift_status.plugin import spec
+        for mode in sorted(ALL_MODES):
+            with self.subTest(mode=mode):
+                tools = {t.id: t for t in assistant.tools(mode=mode)}
+                self.assertEqual(list(tools), ["lift_status", "run_status"])
+                for tool in tools.values():
+                    self.assertEqual((tool.modes, tool.readonly, tool.confirm), (ALL_MODES, True, False))
+                    self.assertLessEqual(len(tool.description), 300)
+        self.assertEqual(tools["run_status"].params["properties"]["area"]["enum"],
+                         ["Mt. Morrisey", "Sundance", "Tod Mountain", "Orient Ridge", "West Bowl"])
+        self.assertEqual([t["id"] for t in hooks.run(spec, "tools", mode="guest")], ["lift_status", "run_status"])
+
+    def test_every_lift(self):
+        self.assertEqual(self.call("lift_status"), {"ok": True, "result": {
+            "lifts_open": "2 of 4", "open": ["Sunburst Express until 3:30 pm", "Orient until 3 pm"],
+            "closed": ["Morrisey Express", "Burfield"], "runs_open": "6 of 7", "resort_update": "Alpine Area Open",
+        }})
+
+    def test_one_lift_in_loose_words(self):
+        expected = {"lift": "Sunburst Express Chairlift", "status": "open until 3:30 pm",
+                    "hours": "daily, 9 am to 3:30 pm", "resort_update": "Alpine Area Open"}
+        for text in ("Sunburst", "the sunburst chair", "sun burst", "Sunbirst express"):
+            with self.subTest(text=text):
+                self.assertEqual(self.lift(text), expected)
+        self.assertEqual(self.lift("burr field")["lift"], "Burfield Chairlift")
+
+    def test_hours_follow_the_schedule_and_the_clock(self):
+        self.assertEqual(self.lift("burfield")["hours"], "9:30 am to 4 pm")
+        self.at(2, 5, 12)
+        self.assertEqual(self.lift("burfield")["hours"], "9 am to 4 pm")
+        self.at(12, 13, 7)
+        self.assertEqual(self.lift("sunburst")["status"], "opens at 9 am")
+        self.at(12, 13, 17)
+        self.assertEqual(self.lift("sunburst")["status"], "closed for the day at 3:30 pm")
+        self.assertNotIn("Sunburst Express", " ".join(self.call("lift_status")["result"].get("open", [])))
+
+    def test_shared_name_lists_both_unless_chair_is_said(self):
+        self.data["lifts"].append({"name": "Morrisey Platter", "short_name": "Morrisey Platter", "kind": "Platter",
+                                   "status": "open", "notes": "", "hours": ["8:45am to 4:00pm"]})
+        both = self.lift("morrissey")["matches"]
+        self.assertEqual([(m["lift"], m["status"]) for m in both],
+                         [("Morrisey Express Chairlift", "closed"), ("Morrisey Platter", "open until 4 pm")])
+        self.assertEqual(self.lift("morrisey chair")["lift"], "Morrisey Express Chairlift")
+        self.assertEqual(self.lift("morrisey platter")["lift"], "Morrisey Platter")
+
+    def test_unknown_lift_names_the_real_ones(self):
+        result = self.call("lift_status", {"lift": "village gondola"})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "Sun Peaks has no lift called 'village gondola'. The lifts are "
+                                          "Sunburst Express, Morrisey Express, Orient and Burfield.")
+
+    def test_nothing_running(self):
+        from lift_status import assistant
+        for lift in self.data["lifts"]:
+            lift["status"] = "closed"
+        result = self.call("lift_status")["result"]
+        self.assertEqual((result["lifts_open"], result["note"]), ("0 of 4", assistant.NO_LIFTS))
+        self.data = {"lifts": [], "zones": [], "summary": {}}
+        self.assertEqual(self.call("lift_status"), {"ok": False, "error": assistant.OFF_SEASON})
+        self.error = requests.ConnectionError("down")
+        self.assertEqual(self.call("run_status"), {"ok": False, "error": assistant.UNAVAILABLE})
+
+    def test_runs_summary_and_area(self):
+        self.assertEqual(self.call("run_status")["result"], {
+            "runs_open": "6 of 7", "groomed": ["Anticipation", "5 Mile Lower", "Alley"],
+            "by_area": {"Mt. Morrisey": "1 of 1 open", "Sundance": "1 of 2 open", "Tod Mountain": "2 of 2 open",
+                        "West Bowl": "1 of 1 open", "Orient Ridge": "1 of 1 open"},
+        })
+        self.assertEqual(self.call("run_status", {"area": "Sundance"})["result"], {
+            "area": "Sundance", "runs_open": "1 of 2", "groomed": "none", "open_not_groomed": ["Peak-A-Boo"],
+        })
+
+    def test_one_run(self):
+        self.assertEqual(self.call("run_status", {"run": "five mile"})["result"], {
+            "run": "5 Mile Lower", "area": "Tod Mountain", "status": "open, groomed", "difficulty": "green (easiest)",
+        })
+        self.assertEqual(self.call("run_status", {"run": "roller coaster"})["result"]["status"], "closed")
+        self.assertFalse(self.call("run_status", {"run": "alley", "area": "Sundance"})["ok"])
