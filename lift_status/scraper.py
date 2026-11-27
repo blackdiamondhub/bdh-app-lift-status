@@ -127,9 +127,11 @@ def _parse_operations_update(soup):
     body = soup.find("div", class_="field--name-body")
     if body is None:
         return None
+    # Only a real post: the standing "Real-Time Lift and Alpine Trail Grooming
+    # Updates" heading also says "update" but is boilerplate + PDF archive links.
     heading = None
     for h2 in body.find_all("h2"):
-        if "update" in h2.get_text(" ", strip=True).lower():
+        if h2.get_text(" ", strip=True).lower().startswith("operations update"):
             heading = h2
             break
     if heading is None:

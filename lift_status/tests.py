@@ -371,6 +371,20 @@ class ParseLiftStatusRevampTests(TestCase):
     def test_no_operations_update(self):
         self.assertIsNone(parse_lift_status(SAMPLE_HTML)["update"])
 
+    def test_standing_grooming_heading_is_not_an_update(self):
+        # Page layout on 2026-11-27: no dated post, only the boilerplate
+        # heading followed by the daily grooming PDF archive.
+        html = SAMPLE_HTML + """
+<div class="field field--name-body">
+  <h2><span>Real-Time Lift and Alpine Trail Grooming Updates</span></h2>
+  <p>The lift and alpine grooming trail status below updates in real time.</p>
+  <h3>Grooming PDF</h3>
+  <p><a href="#">Grooming Report: November 27</a></p>
+  <p><a href="#">Grooming Report: November 26</a></p>
+</div>
+"""
+        self.assertIsNone(parse_lift_status(html)["update"])
+
 
 # ===========================================================================
 # View tests
